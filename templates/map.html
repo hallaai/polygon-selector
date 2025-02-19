@@ -1,0 +1,140 @@
+<!-- templates/map.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Location Selector</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        #map { height: 600px; }
+        #sidebar {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 300px;
+            height: 100%;
+            background: white;
+            padding: 20px;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        .location-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .location-item {
+            padding: 8px;
+            margin: 4px 0;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+        #polygon-points {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 200px;
+            height: 100px;
+            z-index: 1000;
+        }
+        #deselect-polygon {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <textarea id="polygon-points" readonly></textarea>
+    <button id="deselect-polygon">Deselect Polygon</button>
+    <div id="sidebar">
+        <h3>Selected Locations:</h3>
+        <ul id="location-list" class="location-list"></ul>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw-src.js"></script>
+    <script>
+        const map = L.map('map').setView([60.1699, 24.9384], 7);  // Centered on Finland
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        
+        // Add draw control
+        const drawControl = new L.Control.Draw({
+            draw: {
+                polygon: true,
+                polyline: false,
+                rectangle: false,
+                circle: false,
+                marker: false
+            },
+            edit: false
+        }).addTo(map);
+
+        // Load points
+        let markers = [];
+        fetch('/api/points')
+            .then(r => r.json())
+            .then(points => {
+                markers = points.map(p => {
+                    const marker = L.marker([p.lat, p.lng])
+                        .bindTooltip(p.name)
+                        .addTo(map);
+
+                    marker.on('click', function() {
+                        alert(p.name);
+                    });
+
+                    return marker;
+                });
+            });
+
+        let drawnLayer = null;
+
+        // Handle polygon creation
+        map.on(L.Draw.Event.CREATED, function(e) {
+            const layer = e.layer;
+            drawnLayer = layer; // Store the drawn layer
+            const coords = layer.getLatLngs()[0].map(ll => [ll.lng, ll.lat]); // Convert to [x,y]
+            
+            fetch('/api/check-points', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({polygon: coords})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.selected) {
+                    const locationList = document.getElementById('location-list');
+                    locationList.innerHTML = data.selected
+                        .map(p => `<li class="location-item">${p.name}<br><small>(${p.lat}, ${p.lng})</small></li>`)
+                        .join('');
+
+                    // Update the textbox with point names and details
+                    const polygonPointsText = data.selected
+                        .map(p => `${p.name} (${p.lat}, ${p.lng})`)
+                        .join('\n');
+                    document.getElementById('polygon-points').value = polygonPointsText;
+                } else {
+                    console.error("data.selected is undefined or null");
+                    document.getElementById('polygon-points').value = "No points selected";
+                }
+            });
+            
+            map.eachLayer(l => l !== layer && l instanceof L.Polygon && map.removeLayer(l));
+            layer.addTo(map);
+        });
+
+        // Handle deselect polygon button click
+        document.getElementById('deselect-polygon').addEventListener('click', function() {
+            if (drawnLayer) {
+                map.removeLayer(drawnLayer);
+                drawnLayer = null;
+            }
+            document.getElementById('location-list').innerHTML = '';
+            document.getElementById('polygon-points').value = '';
+        });
+    </script>
+</body>
+</html>
